@@ -1,5 +1,8 @@
 # pathtracer
 Simple unidirectional path tracer written in C++.
+
+![Github logo](/images/cornelBox.tga)
+
 ### Supports:
 * Area lights
 * Sphere lights
