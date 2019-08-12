@@ -1,7 +1,7 @@
 # pathtracer
 Simple unidirectional path tracer written in C++.
 
-![Github logo](/images/cornelBox.tga)
+![Github logo](/images/cornelBox.bmp)
 
 ### Supports:
 * Area lights
