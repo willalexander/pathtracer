@@ -15,9 +15,11 @@ Simple unidirectional path tracer written in C++.
 * Embree
 
 ### Usage:
+```
 >myRenderer -i scene.waff --psamples 64 --hsamples 1 --lsamples 1 -bmp image.bmp
+```
 
-Input Paaramters:
+Input Parameters:
 * i:              The scene to render (a text file in .waff format. See exmaples in the repo)
 * psamples        Number of samples per pixel
 * hsamples        Number of hemisphere samples for indirect diffuse reflection
