@@ -1,6 +1,6 @@
 # pathtracer
 Simple unidirectional path tracer written in C++.
-Supports:
+# Supports:
 Area lights
 Sphere lights
 OBJ polygon geometry
@@ -9,7 +9,7 @@ Specular Surfaces
 Homogeneous participating media
 Homogoenous subsurface scattering
 
-Dependencies:
+# Dependencies:
 Boost
 TinyOBJ
 Embree
