@@ -1,7 +1,7 @@
 # pathtracer
 Simple unidirectional path tracer written in C++.
 
-![](/images/dragonChrome.bmp){width=50%} ![](/images/dragonGlass.bmp)
+![](/images/dragonChrome.bmp){width:50%} ![](/images/dragonGlass.bmp)
 
 ### Supports:
 * Area lights
