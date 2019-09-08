@@ -38,10 +38,9 @@ void wa_raytracer::loadLightGeo(float px, float py, float pz, float ux, float uy
 
 void wa_raytracer::loadGeo(string fileName)
 {
-	cout << "Loading " << fileName.c_str() << "..." << endl;
-	//auto start_time = microsec_clock::local_time();
+	/*cout << "Loading " << fileName.c_str() << "..." << endl;
 
-	/*Load the geometry into tinyObj format. **ASSUMING THESE ARE TRIANGLES** */
+	//Load the geometry into tinyObj format. **ASSUMING THESE ARE TRIANGLES**
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
@@ -49,15 +48,6 @@ void wa_raytracer::loadGeo(string fileName)
 	string err;
 	bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, fileName.c_str());
 
-	//auto td = time_period(start_time, microsec_clock::local_time()).length();
-	//cout << "tinyobj loading took: " << td << endl;
-
-
-	//cout << "Num Verts: " << attrib.vertices.size() << endl;
-	//cout << "Num Faces: " << shapes[0].mesh.num_face_vertices.size() << endl;
-
-	//start_time = microsec_clock::local_time();
-	/*Pass the data to Embree:*/
 	RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
 
 	vert *vertices = (vert *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, sizeof(vert), attrib.vertices.size() / 3.0);
@@ -82,10 +72,96 @@ void wa_raytracer::loadGeo(string fileName)
 
 	rtcCommitGeometry(geom);
 	unsigned int geomID = rtcAttachGeometry(scene, geom);
-	rtcReleaseGeometry(geom);
+	rtcReleaseGeometry(geom);*/
 
-	//td = time_period(start_time, microsec_clock::local_time()).length();
-	//cout << "Embree loading took: " << td << "\n\n" << endl;
+	cout << "Loading " << fileName.c_str() << "..." << endl;
+
+	//If this is a '.fast' file, a special format for speedy loading:
+	if (fileName.substr(fileName.size() - 4, 4) == "fast")
+	{
+		std::cout << "Is a .fast file" << std::endl;
+
+		std::ifstream fileIn(fileName, std::ios_base::binary);
+		int a = (int)(fileIn.tellg());
+		fileIn.seekg(0, std::ios_base::end);
+		int b = (int)(fileIn.tellg()) - a;
+		fileIn.seekg(0, std::ios_base::beg);
+		char *data = (char *)(malloc(b));
+		fileIn.read(data, b);
+
+		int numVertices = ((int *)(data))[0];
+		int numTriangles = ((int *)(data))[1];
+		float *vertices = (float *)(data + 8);
+		int *triangles = (int *)(data + 8 + numVertices*16);
+
+		//Pass the data to Embree:
+		RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
+
+		float *vertices1 = (float *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 16, numVertices);
+		int *triangles1 = (int *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 12, numTriangles);
+
+		std::memcpy(vertices1, vertices, numVertices * 16);
+		std::memcpy(triangles1, triangles, numTriangles * 12);
+
+		rtcCommitGeometry(geom);
+		unsigned int geomID = rtcAttachGeometry(scene, geom);
+		rtcReleaseGeometry(geom);
+
+		free(data);
+
+		return;
+	}
+
+	float *vertices;
+	int *triangles;
+	int numVertices;
+	int numTriangles;
+
+	convertObjFileToEmbreeFormat(fileName, &vertices, &triangles, &numVertices, &numTriangles);
+
+	//Pass the data to Embree:
+	RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
+
+	float *vertices1 = (float *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 16, numVertices);
+	int *triangles1 = (int *)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 12, numTriangles);
+
+	std::memcpy(vertices1, vertices, numVertices*16);
+	std::memcpy(triangles1, triangles, numTriangles*12);
+	free(vertices);
+	free(triangles);
+
+	rtcCommitGeometry(geom);
+	unsigned int geomID = rtcAttachGeometry(scene, geom);
+	rtcReleaseGeometry(geom);
+}
+
+void wa_raytracer::convertObjFileToEmbreeFormat(std::string fileName, float **vertices, int **triangles, int *numVertices, int *numTriangles)
+{
+	//Load the geometry into tinyObj format. **ASSUMING THESE ARE TRIANGLES** 
+	tinyobj::attrib_t attrib;
+	std::vector<tinyobj::shape_t> shapes;
+	std::vector<tinyobj::material_t> materials;
+
+
+	string err;
+	bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, fileName.c_str());
+
+	//Allocate memory:
+	*vertices = (float *)(malloc((4 * attrib.vertices.size() / 3)* sizeof(float)));
+	*triangles = (int *)(malloc(shapes[0].mesh.num_face_vertices.size() * 3 * sizeof(int)));
+
+	for(int v = 0; v < attrib.vertices.size()/3; v++)
+	{
+		(*vertices)[v*4 + 0] = attrib.vertices[v*3 + 0];
+		(*vertices)[v*4 + 1] = attrib.vertices[v*3 + 1];
+		(*vertices)[v*4 + 2] = attrib.vertices[v*3 + 2];
+	}
+	for (int i = 0; i < shapes[0].mesh.num_face_vertices.size() * 3; i++) (*triangles)[i] = shapes[0].mesh.indices[i].vertex_index;
+
+
+
+	*numVertices = attrib.vertices.size() / 3;
+	*numTriangles = shapes[0].mesh.num_face_vertices.size();
 }
 
 void wa_raytracer::updateLight(int, float, float, float, float, float, float, float, float, float)
@@ -126,14 +202,6 @@ bool wa_raytracer::trace(float px, float py, float pz, float dx, float dy, float
 
 	return false;
 }
-
-/*
-float traceShadow(float3 A, float3 B, float bias) const;
-void sphereBoundsFunc(const struct RTCBoundsFunctionArguments *args);
-void sphereIntersectFunc(const RTCIntersectFunctionNArguments *args);
-void sphereOccludedFunc(const RTCOccludedFunctionNArguments *args);
-void sphereFilterFunction(const RTCFilterFunctionNArguments *args);
-*/
 
 
 void wa_raytracer::release()

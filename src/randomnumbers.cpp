@@ -6,6 +6,11 @@
 float randNumbers[2000];
 int randCounter;
 
+static int rCount = 0;
+
+std::default_random_engine generator(rCount);
+//rCount++;
+
 void generateRandomNumbers()
 {
 	static int rCount = 0;
@@ -24,9 +29,15 @@ void generateRandomNumbers()
 
 float randFloat()
 {
-	randCounter++;
+	/*randCounter++;
 	if(randCounter > 1000) randCounter = 0;
-	return randNumbers[randCounter];
+	return randNumbers[randCounter];*/
+
+	
+	
+	std::uniform_real_distribution<float> distribution(0.0, 1.0);
+
+	return distribution(generator);
 }
 
 bool randBool()

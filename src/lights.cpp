@@ -15,6 +15,11 @@ float3 wa_light::getP() const
 	return P;
 }
 
+float3 wa_light::getCentre() const
+{
+	return P;
+}
+
 
 wa_areaLight::wa_areaLight(float px, float py, float pz, float ux, float uy, float uz, float vx, float vy, float vz, float cr, float cg, float cb) :
 	wa_light(px, py, pz),
@@ -26,6 +31,11 @@ wa_areaLight::wa_areaLight(float px, float py, float pz, float ux, float uy, flo
 	irradiance(0.5 * power / surfaceArea),
 	radiance(irradiance / M_PI)
 {
+}
+
+float3 wa_areaLight::getCentre() const
+{
+	return P + 0.5*(U + V);
 }
 
 int wa_areaLight::geom_numQuads() const
@@ -76,7 +86,7 @@ bool wa_areaLight::radianceSample(float3 SP, float3 SN, wa_colour *Li, float3 *L
 	*LP = samplePos();
 
 	//If the radiance is being received by a surface, and this light sample point is not 'in front' of the surface, then it contributes nothing:
-	if ((SN != 0.0) && (dot(SN, (*LP-SP)) <= 0.0)) return false;
+	//if ((SN != 0.0) && (dot(SN, (*LP-SP)) <= 0.0)) return false;
 
 	//Radiance of this area light is constant across its surface:
 	*Li = radiance;		

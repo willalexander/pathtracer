@@ -8,6 +8,12 @@ float3 normalized(float3 A)
 	return out;
 }
 
+bool operator==(const float3& A, const float& B)
+{
+	if ((X(A) == B) && (Y(A) == B) && (Z(A) == B)) return true;
+	return false;
+}
+
 bool operator!=(const float3& A, const float& B)
 {
 	if ((X(A) != B) || (Y(A) != B) || (Z(A) != B)) return true;

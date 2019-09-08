@@ -18,6 +18,7 @@ public:
 
 	void loadLightGeo(float, float, float, float, float, float, float, float, float);
 	void loadGeo(string);
+	void convertObjFileToEmbreeFormat(std::string, float **, int **, int *, int *);
 
 	void updateLight(int, float, float, float, float, float, float, float, float, float);
 

@@ -410,10 +410,12 @@ float3 hemisphereSampleUniform(float3 D, float *reciprocal_pdf)
 	if((Y(D) == 0.0)&&(Z(D) == 0.0)) tangentA = normalized(cross(D, YAX));
 	float3 tangentB = normalized(cross(tangentA, D));
 
-	float theta = acos(1.0 - randFloat());
+	float cosTheta = 1.0 - randFloat();
+	float theta = acos(cosTheta);
 	float phi = randFloat() * 2.0 * M_PI;
 
-	out = cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
+	//out = cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
+	out = cosTheta * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
 	if (reciprocal_pdf != NULL) *reciprocal_pdf = 2.0 * M_PI;
 
 	return out;
@@ -436,6 +438,85 @@ float3 hemisphereSampleUniform(float3 D, float maxAngle, float *weight)
 	if (weight != NULL) *weight = 1;
 
 	return out;
+}
+
+//
+// sphereSampleBiased() -	Generates a random sample in the unit sphere, biased towards the direction D.
+//							The higher 'a', the more biased the sample
+//
+float3 sphereSampleBiased(float3 D, float a, float *reciprocal_pdf)
+{
+	float3 out;
+	float3 tangentA, tangentB;
+	float phi, theta;
+
+	//Generate tangent vectors based on D:
+	tangentA = normalized(cross(D, XAX));
+	if ((Y(D) == 0.0) && (Z(D) == 0.0)) tangentA = normalized(cross(D, YAX));
+	tangentB = normalized(cross(tangentA, D));
+
+	//phi values are distributed uniformly:
+	phi = randFloat() * 2.0 * M_PI;
+
+	//theta values are distibuted with a probability proportional to cos(theta/2):
+	theta = 2.0 * acos(pow(1.0 - randFloat(), 1.0/3.0));
+
+
+	//compute the PDF:
+	*reciprocal_pdf = 1.0 / ( (3.0/(8.0*M_PI)) * cos(0.5*theta) );
+
+	//std::cout << *reciprocal_pdf << std::endl;
+
+	//Compute the direction vector:
+	return cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
+}
+
+float3 sphereSampleBiased2(float3 D, float a, float *reciprocal_pdf)
+{
+	float3 out;
+	float3 tangentA, tangentB;
+	float phi, theta;
+
+	//Generate tangent vectors based on D:
+	tangentA = normalized(cross(D, XAX));
+	if ((Y(D) == 0.0) && (Z(D) == 0.0)) tangentA = normalized(cross(D, YAX));
+	tangentB = normalized(cross(tangentA, D));
+
+	//phi values are distributed uniformly:
+	phi = randFloat() * 2.0 * M_PI;
+
+	//theta values are distibuted uniformly:
+	theta = 0.5 * M_PI * randFloat();
+
+	//compute the PDF:
+	*reciprocal_pdf = M_PI*M_PI * sin(theta);
+
+	//Compute the direction vector:
+	return cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
+}
+
+float3 sphereSampleBiased3(float3 D, float a, float *reciprocal_pdf)
+{
+	float3 out;
+	float3 tangentA, tangentB;
+	float phi, theta;
+
+	//Generate tangent vectors based on D:
+	tangentA = normalized(cross(D, XAX));
+	if ((Y(D) == 0.0) && (Z(D) == 0.0)) tangentA = normalized(cross(D, YAX));
+	tangentB = normalized(cross(tangentA, D));
+
+	//phi values are distributed uniformly:
+	phi = randFloat() * 2.0 * M_PI;
+
+	//theta values are distibuted according to the pattern (PI/2 - theta) ^ a:
+	theta = 0.5*M_PI - pow(pow(0.5*M_PI, a+1)*randFloat(), 1.0 / (a + 1.0));
+
+	//compute the PDF:
+	*reciprocal_pdf = 1.0 / (((a+1)/(4.0*pow(0.5*M_PI,a+2))) * pow(0.5*M_PI - theta, a) / sin(theta));
+
+	//Compute the direction vector:
+	return cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
 }
 
 float3 sphereSampleUniform()

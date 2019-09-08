@@ -13,6 +13,7 @@ using namespace boost::qvm;
 struct float3
 {
 	friend float3 normalized(float3);
+	friend bool operator==(const float3&, const float&);
 	friend bool operator!=(const float3&, const float&);
 
 	float3();

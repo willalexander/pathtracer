@@ -34,13 +34,14 @@ class wa_primitive
 		void setP(float3 val);
 		void setN(float3 val);
 
-	private:
-		int lightOrSurface;
+	//private:
+		int lightOrSurface = 0;
 		float surfaceArea;
 		wa_colour power;
 		wa_colour irradiance;
 
 		wa_object *objectPointer;
+		int objID;
 
 		float3 P;
 		float3 N;

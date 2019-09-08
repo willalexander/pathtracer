@@ -156,6 +156,9 @@ float3 hemisphereSample(float3, float *);
 float3 hemisphereSampleUniform(float3, float *);
 float3 hemisphereSampleUniform(float3, float, float *);
 float3 sphereSampleUniform();
+float3 sphereSampleBiased(float3, float, float *);
+float3 sphereSampleBiased2(float3, float, float *);
+float3 sphereSampleBiased3(float3, float, float *);
 bool solveQuadraticEquation(float, float, float, float *, float *);
 
 void generateSpherePoints(float3, float, int, int, int, int, wa_vertex *, wa_vertex *, wa_vertex *, wa_vertex *);

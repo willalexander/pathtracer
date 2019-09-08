@@ -24,6 +24,8 @@ struct wa_shader
 	wa_colour ss;
 	wa_colour st;
 
+	float ior;
+
 	int proceduralVolume = 1;
 	bool homogenous = true;
 
@@ -32,11 +34,16 @@ struct wa_shader
 	bool isLight = false;
 	bool diffuse = true;
 	bool specular = false;
+	bool sss = false;
 	bool dielectric = false;
+	bool dielectricsss = false;
+
+	int objID;
 
 	void initialize();
 	float BRDF(float3, float3);
 	float phase(float);
+	float3 refract(float3, float3, float *);
 
 	wa_colour st_f(float3);
 
@@ -58,7 +65,7 @@ class wa_object
 		wa_shader getShader();
 		void setShader(wa_shader);
 
-	private:
+	//private:
 		int ID;
 		string fileName;
 		int shaderType;

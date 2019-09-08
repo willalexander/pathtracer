@@ -13,6 +13,7 @@ class wa_light
 		wa_light(float, float, float);
 
 		virtual float3 getP() const;
+		virtual float3 getCentre() const;
 		virtual int geom_numQuads() const = 0;
 		virtual void geom_placeVertices(wa_vertex *) const = 0;
 		virtual void geom_placeIndices(wa_quad *) const = 0;
@@ -34,6 +35,7 @@ class wa_areaLight : wa_light
 	public:
 		wa_areaLight(float, float, float, float, float, float, float, float, float, float, float, float);
 
+		virtual float3 getCentre() const;
 		float3 getN() const;
 		virtual wa_colour getPower() const;
 		virtual wa_colour getIrradiance() const;

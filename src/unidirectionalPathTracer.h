@@ -46,14 +46,15 @@ class udp_renderer
 		void renderTile(int);
 		
 		
-		wa_colour radiance(float3, float3, int, bool, wa_path *, int);
-		wa_colour transmission(wa_object *, wa_shader, float3, float3, float3, int, wa_path *);
-		wa_colour reflection(wa_object *, wa_shader, float3, float3, float3, int, wa_path *, int);
+		wa_colour radiance(float3, float3, int, bool, wa_path *, int, wa_shader);
+		wa_colour transmission(wa_object *, wa_shader, float3, float3, float3, float3, int, wa_path *, bool, wa_shader);
+		wa_colour reflection(wa_object *, wa_shader, float3, float3, float3, float3, int, wa_path *, int, bool, bool, float, wa_shader);
 		wa_colour directReflection(wa_object *, wa_shader, float3, float3, float3, wa_path *);
-		wa_colour indirectReflection(wa_object *, wa_shader, float3, float3, float3, int, wa_path *);
+		wa_colour indirectReflection(wa_object *, wa_shader, float3, float3, float3, int, wa_path *, wa_shader);
 		wa_colour volumeAttenuation(wa_shader, float3, float3, wa_path *);
-		wa_colour volumeScattering(wa_shader, float3, float3, int, wa_path *);
-		wa_colour visibility(float3, float3, wa_path *);
+		wa_colour volumeScattering(int, wa_shader, float3, float3, int, wa_path *, bool, float);
+		wa_colour directLightingSingleScatter(float3, float3, int, int, wa_shader);
+		wa_colour visibility(float3, float3, wa_path *, bool);
 
 		float3 reflectVector(float3, float3);
 		
@@ -84,6 +85,8 @@ class udp_renderer
 		int numThreads;
 		tile *tiles;
 		float progress;
+		boost::mutex mutex;
+		int latestReportedProgress;
 		
 		wa_shader globalShader;
 
@@ -100,5 +103,7 @@ class udp_renderer
 		bool abortRender;
 
 		tile rr;
+
+		int numLights;
 };
 
