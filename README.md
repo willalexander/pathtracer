@@ -10,8 +10,8 @@ Simple unidirectional path tracer written in C++.
 * OBJ polygon geometry
 * Lambert diffuse surfaces
 * Specular Surfaces
-* Homogeneous participating media
-* Homogoenous subsurface scattering
+* Homogeneous, isotropic participating media
+* Homogoenous, isotropic subsurface scattering
 
 ### Dependencies:
 * Boost
