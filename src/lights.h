@@ -23,6 +23,7 @@ class wa_light
 		virtual void posAndDirSample(float3 *, float3 *) = 0;
 
 		virtual bool radianceSample(float3, float3, wa_colour *, float3 *, float *, float) = 0;
+		virtual float pdf(float3, float3) = 0;
 		virtual void print() = 0;
 		virtual int type() = 0;
 
@@ -45,6 +46,7 @@ class wa_areaLight : wa_light
 		virtual void geom_placeIndices(wa_quad *) const;
 
 		virtual bool radianceSample(float3, float3, wa_colour *, float3 *, float *, float);
+		virtual float pdf(float3, float3);
 
 		virtual void print();
 		virtual int type() { return LIGHT_AREA_TYPE; }
@@ -79,6 +81,7 @@ class wa_sphereLight : public wa_light
 		void sample(float3, float3 *, float3 *) const;
 		void sample(float3, float, float3 *) const;
 		virtual bool radianceSample(float3, float3, wa_colour *, float3 *, float *, float);
+		virtual float pdf(float3, float3);
 
 		virtual void print();
 		virtual int type() { return LIGHT_SPHERE_TYPE; }

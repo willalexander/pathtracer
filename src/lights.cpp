@@ -88,6 +88,9 @@ bool wa_areaLight::radianceSample(float3 SP, float3 SN, wa_colour *Li, float3 *L
 	//If the radiance is being received by a surface, and this light sample point is not 'in front' of the surface, then it contributes nothing:
 	//if ((SN != 0.0) && (dot(SN, (*LP-SP)) <= 0.0)) return false;
 
+	// If the caller's position is actually on the surface of the light, then no contribution:
+	if (dot(SP - P, N) < traceBias) return false;
+
 	//Radiance of this area light is constant across its surface:
 	*Li = radiance;		
 	
@@ -95,6 +98,14 @@ bool wa_areaLight::radianceSample(float3 SP, float3 SN, wa_colour *Li, float3 *L
 	*reciprocal_pdf = surfaceArea * surfaceArea_to_solidAngle(SP, *LP, N);
 
 	return true;
+}
+
+//
+//	pdf()	returns the probability density (relative to solid angle at the callers's position) with which 'P' would have been generated using this light's sampling process:
+//
+float wa_areaLight::pdf(float3 P, float3 SP)
+{
+	return (1.0 / (surfaceArea * surfaceArea_to_solidAngle(SP, P, N)));
 }
 
 void wa_areaLight::print()
@@ -232,6 +243,17 @@ bool wa_sphereLight::radianceSample(float3 SP, float3 SN, wa_colour *Li, float3 
 	*reciprocal_pdf = 2.0 * M_PI * (1.0 - cos(coneAngle));
 
 	return true;
+}
+
+//
+//	pdf()	returns the probability density (relative to solid angle at the callers's position) with which 'P' would have been generated using this light's sampling process:
+//
+float wa_sphereLight::pdf(float3 P, float3 SP)
+{
+	float3 SL = P - SP;
+	float SLdist = mag(SL);
+	float coneAngle = asin(rad / SLdist);
+	return 1.0 / (2.0 * M_PI * (1.0 - cos(coneAngle)));
 }
 
 

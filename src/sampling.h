@@ -60,3 +60,29 @@ class wa_samplerBeamExponentialAttenuation : public wa_samplerBeam
 	private:
 		const float st;
 };
+
+class wa_samplerBeamExponentialDistribution : public wa_samplerBeam
+{
+public:
+	wa_samplerBeamExponentialDistribution(const float3&, const float3&, const float&);
+	virtual float generateSample(float *);
+
+private:
+	const float a;
+	const float recip_a;
+	const float exp_aL_minus_1;
+};
+
+
+class wa_samplerBeamPowerDistribution : public wa_samplerBeam
+{
+public:
+	wa_samplerBeamPowerDistribution(const float3&, const float3&, const float&);
+	virtual float generateSample(float *);
+
+private:
+	const float a;
+	const float aplus1;
+	const float L_aplus1;
+	const float powroot;
+};

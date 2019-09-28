@@ -8,6 +8,9 @@ using namespace std;
 float randTable[100];
 int randCount = 0;
 
+#define TWO_PI 6.2832
+#define EIGHT_PI 25.133
+
 void generateRandTable()
 {
 	for (int i = 0; i < 100; i++)
@@ -514,6 +517,37 @@ float3 sphereSampleBiased3(float3 D, float a, float *reciprocal_pdf)
 
 	//compute the PDF:
 	*reciprocal_pdf = 1.0 / (((a+1)/(4.0*pow(0.5*M_PI,a+2))) * pow(0.5*M_PI - theta, a) / sin(theta));
+
+	//Compute the direction vector:
+	return cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);
+}
+
+//
+// sphereSamplePoleWeighted() - generates samples on the unit sphere, weighted towards the polar direction (D). The higher a, the more strongly weighted: 
+//
+float3 sphereSamplePoleWeighted(float3 D, float a, float *reciprocal_pdf)
+{
+	float3 out;
+	float3 tangentA, tangentB;
+	float phi, theta;
+
+	//Generate tangent vectors based on D:
+	tangentA = normalized(cross(D, XAX));
+	if ((Y(D) == 0.0) && (Z(D) == 0.0)) tangentA = normalized(cross(D, YAX));
+	tangentB = normalized(cross(tangentA, D));
+
+	//phi values are distributed uniformly:
+	phi = randFloat() * TWO_PI;
+
+	//theta values are distibuted according to a cosine power pattern:
+	float cosexp = 1.0 / (a + 2.0);
+	//theta = 2.0 * acos(pow(randFloat(), cosexp));
+	float halfTheta = acos(pow(randFloat(), cosexp));
+	theta = 2.0 * halfTheta;
+
+	//compute the PDF:
+	//*reciprocal_pdf = 1.0 / (((a+2.0)/(8.0*M_PI)) * pow(cos(theta/2.0), a));
+	*reciprocal_pdf = cosexp * EIGHT_PI * (1.0 / pow(cos(halfTheta), a));
 
 	//Compute the direction vector:
 	return cos(theta) * D + sin(theta) * (cos(phi) * tangentA + sin(phi) * tangentB);

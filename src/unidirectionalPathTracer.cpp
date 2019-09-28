@@ -11,9 +11,10 @@ using namespace std;
 #define DEBUG_WIDTH -1
 
 #define TRACE_BIAS 0.001
-#define TRACE_DEPTH 10
 #define RAYMARCH_STEPS_PER_METRE 0.02
 #define LOW_VISIBILITY_THRESHOLD 0.01
+#define ONE_OVER_4_PI 0.07958
+#define REFL_OR_TRANS_BLEND_FACTOR 0.75
 
 #define NEXT_EVENT_ESTIMATION true
 
@@ -22,7 +23,7 @@ using namespace std;
 #define FAST
 
 
-udp_renderer::udp_renderer(wa_content *content_in, float *frameBufferPtr, int numPixelSamplesVal, int numHemisphereSamplesVal, int numSphereSamplesVal, int numLightSamplesVal)
+udp_renderer::udp_renderer(wa_content *content_in, float *frameBufferPtr, int numPixelSamplesVal, int numHemisphereSamplesVal, int numSphereSamplesVal, int numLightSamplesVal, wa_shader globalShader_in, int maxTraceDepth_in, float rmdde_in, float rmdsr_in)
 	: theContent(content_in),
 	lights(content_in->getLights()),
 	numPixelSamples(numPixelSamplesVal),
@@ -33,7 +34,10 @@ udp_renderer::udp_renderer(wa_content *content_in, float *frameBufferPtr, int nu
 	numLightSamples(numLightSamplesVal),
 	reciprocal_numLightSamples(1.0 / numLightSamplesVal),
 	worldBoundSphere_P(275.0, 275.0, 275.0),
-	worldBoundSphere_rad(1100.0)
+	worldBoundSphere_rad(1100.0),
+	maxTraceDepth(maxTraceDepth_in),
+	rayMarchDistanceDistributionExponent(rmdde_in),
+	rayMarchDistanceSampleRate(rmdsr_in)
 {
 	frameBuffer = frameBufferPtr;
 
@@ -50,10 +54,7 @@ udp_renderer::udp_renderer(wa_content *content_in, float *frameBufferPtr, int nu
 	rf = 1;
 	setRegion(0, renW, 0, renH);
 
-	//Global shader describes the default volume light transport properties of the whole world. Set to 'clear' by default!
-	/*globalShader.isClear = false;
-	globalShader.ss.set(0.001, 0.001, 0.001);
-	globalShader.st.set(0.001, 0.001, 0.001);*/
+	globalShader = globalShader_in;
 
 	numThreads = 4;
 
@@ -86,7 +87,7 @@ void udp_renderer::render(float *buffer)
 
 	abortRender = false;
 
-	//Render on threads: (Boost on Windows, pthread on Linux)
+	//Render on threads:
 	progress = 0.0;
 	latestReportedProgress = 0;
 
@@ -106,10 +107,6 @@ void udp_renderer::renderTile(int t)
 	wa_ray sampleRay;
 	wa_colour pixelValue;
 
-	/*for (int j = tiles[t].b; j < tiles[t].t; j++)
-	{
-		for (int i = tiles[t].l; i < tiles[t].r; i++)
-		{*/
 	for(int j = 0; j < disH; j++)
 	{
 		for(int i = t; i < disW; i += numThreads)
@@ -125,7 +122,6 @@ void udp_renderer::renderTile(int t)
 			for (int s = 0; s < numPixelSamples; s++)
 			{
 				debugPix = false;
-				if((i == 350)&&(j == 211)&&(s == 3742)) debugPix = true;
 
 				sampleRay = camera->generateRayForPixel(i, j);
 
@@ -134,6 +130,7 @@ void udp_renderer::renderTile(int t)
 				bool hit;
 				
 				wa_colour sampleValue = radiance(sampleRay.P, -1.0 * sampleRay.D, 0, true, (debugPix) ? &samplePath : NULL, CAMERA_RAY, globalShader) * (1.0 / (float)(numPixelSamples));
+
 				pixelValue += sampleValue;
 
 				if (debugPix) recordedPaths.push_back(samplePath);
@@ -164,6 +161,7 @@ void udp_renderer::renderTile(int t)
 			pixelValue.placeInFrameBuffer(frameBuffer, disW, i, j);
 		}
 
+		// Print out progress info:
 		mutex.lock();
 		progress += (1.0 / ((float)(numThreads) * disH));
 		int intProgress = (int)(progress * 100.0);
@@ -175,8 +173,6 @@ void udp_renderer::renderTile(int t)
 		}
 		mutex.unlock();
 	}
-
-	std::cout << "Thread #" << t << "finished." << std::endl;
 }
 
 void udp_renderer::divideIntoTiles()
@@ -212,18 +208,19 @@ wa_colour udp_renderer::radiance(float3 P0, float3 D, int traceDepth, bool inclu
 	bool hit;						// Whether or not we hit a surface as a result of trace()
 	float lambda;					// Solution to quadratic equation for ray intersection with the outer world bound
 	wa_colour Lo(0.0);				// Result
+	int objID;						// The ID of the surface intersected
 
-	//Trace a ray in the opposite direction of D to find the first visible surface:
+	 
+	// Trace a ray in the opposite direction of D to find the first visible surface:
 	r1.P = P0;
 	r1.D = _D;
 
-	//hit = theContent->trace(r1, &intr, TRACE_BIAS);
 	hit = theContent->traceFAST(&r1, &intr);
 
-	//If nothing was hit, then limit the ray to the outer bound of the world, consider any volumetric scattering, and exit:
+	// If nothing was hit, then limit the ray to the outer bound of the world, consider any volumetric scattering, and exit:
 	if(!hit)
 	{
-		//If the ray origin is outside of the bound sphere, then stop and return black:
+		// If the ray origin is outside of the bound sphere, then stop and return black:
 		if(mag(P0 - worldBoundSphere_P) >= worldBoundSphere_rad) return 0.0;
 
 		solveQuadraticEquation(1.0, 2.0 * dot(P0 - worldBoundSphere_P, _D), pow(mag(P0 - worldBoundSphere_P), 2) - pow(worldBoundSphere_rad, 2), &lambda, NULL);
@@ -235,20 +232,23 @@ wa_colour udp_renderer::radiance(float3 P0, float3 D, int traceDepth, bool inclu
 	object = intr.getObject();
 	shader = object->getShader();
 
-	//If this intersection event is entering the surface:
+	// If this intersection event is entering the surface:
 	if (dot(intr.N, D) > 0.0)
 	{
 		N1f = intr.N;
 		medium1 = shader;
+		objID = -1;
 	}
 
-	//If this intersection event is exiting the surface:
+	// If this intersection event is exiting the surface:
 	else
 	{
 		N1f = -1.0 * intr.N;
 		medium1 = globalShader;
+		objID = intr.objID;
 	}
 
+	// In order to avoid massive branching of paths, control the probability of continuing each path by reducing it according to trace depth:
 	float doSurfaceEvent_threshold = 1.0 / (float)(0.125*traceDepth + 1);
 	bool doSurfaceEvent = false;
 	if (randFloat() < doSurfaceEvent_threshold) doSurfaceEvent = true;
@@ -259,9 +259,7 @@ wa_colour udp_renderer::radiance(float3 P0, float3 D, int traceDepth, bool inclu
 
 	if(doSurfaceEvent == true)
 	{
-		if (debugPath) debugPath->addVert(intr.P);
-
-		//Emission:
+		// Emission:
 		if (includeEmission) Lo += intr.Le(D);
 		
 		// If a dielectric surface, use the fresnel reflectance at this angle to decide whether to do a reflection event or a transmission event:
@@ -270,33 +268,26 @@ wa_colour udp_renderer::radiance(float3 P0, float3 D, int traceDepth, bool inclu
 		
 		bool reflOrTransEvent = false;
 		float reflOrTransEventProb = 1.0;
-		float blend = 0.75;
 		
-		if ((shader.dielectric) || (shader.dielectricsss)) reflOrTransEventProb = (1.0-blend)*0.5 + blend*fresnel;
+		if ((shader.dielectric) || (shader.dielectricsss)) reflOrTransEventProb = (1.0-REFL_OR_TRANS_BLEND_FACTOR)*0.5 + REFL_OR_TRANS_BLEND_FACTOR *fresnel;
 		
 		if(((shader.dielectric)||(shader.dielectricsss))&&(randFloat() < (1.0 - reflOrTransEventProb))) reflOrTransEvent = true;
 
-		//Transmission from the other side of the surface (multiply result by 2 to account for the fact we only do transmission 50% of the time):
-		if((reflOrTransEvent == true)&&((traceDepth + 1) <= TRACE_DEPTH) && (shader.kt != 0.0)) Lo += (1.0/(1.0- reflOrTransEventProb))*transmission(object, shader, intr.P, N1f, intr.N, D, traceDepth + 1, debugPath, includeEmission, medium1);
+		// Transmission from the other side of the surface:
+		if((reflOrTransEvent == true)&&((traceDepth + 1) <= maxTraceDepth) && (shader.kt != 0.0)) Lo += (1.0/(1.0 - reflOrTransEventProb))*transmission(object, shader, intr.P, N1f, intr.N, D, traceDepth + 1, debugPath, includeEmission, medium1);
 
-		//Reflection:
+		// Reflection:
 		Lo += reflection(object, shader, intr.P, N1f, intr.N, D, traceDepth, debugPath, rayType, includeEmission, reflOrTransEvent, reflOrTransEventProb, medium0);
 
-		//Attenuation along the beam from P1 to P0:
+		// Attenuation along the beam from P1 to P0:
 		Lo *= volumeAttenuation(medium0, P0, intr.P, debugPath);
 
-		//Multiply by reciprocal of probability of performing a surface event:
+		// Multiply by reciprocal of probability of performing a surface event:
 		Lo *= (1.0 / doSurfaceEvent_threshold);
 	}
 
-	//Volumetric scattering along the beam from P1 to P0:
-	Lo += volumeScattering(intr.objID, medium0, P0, intr.P, traceDepth, debugPath, doVolumeEvent, doVolumeEvent_threshold);
-
-	if(debugPath)
-	{
-		for (int i = 0; i < traceDepth; i++) std::cout << "    ";
-		std::cout << "radiance(). tracedepth: " << traceDepth << " Lo: " << Lo << std::endl;
-	}
+	// Volumetric scattering along the beam from P1 to P0:
+	Lo += volumeScattering(objID, medium0, P0, intr.P, traceDepth, debugPath, doVolumeEvent, doVolumeEvent_threshold);
 
 	return Lo;
 }
@@ -325,21 +316,20 @@ wa_colour udp_renderer::reflection(wa_object *object, wa_shader shader, float3 P
 	wa_colour Lo_specular(0.0);									// Outgoing radiance due to specular reflection
 	float fresnel;												// The ratio between diffuse & specular reflection due to Fresnel reflection
 
-
 	//Diffuse:
 	if(shader.diffuse)
 	{
 		Lo_diffuse = directReflection(object, shader, P, N, D, debugPath);
 
 		//Multiply the indirect result by reciprocal of its probability to account for the fact that we only so a surface reflection event some of the time:
-		if((ignoreReflEvent == false)&&((traceDepth + 1) <= TRACE_DEPTH)) Lo_diffuse += (1.0 / reflEventProb)*indirectReflection(object, shader, P, N, D, traceDepth + 1, debugPath, medium);
+		if((ignoreReflEvent == false)&&((traceDepth + 1) <= maxTraceDepth)) Lo_diffuse += (1.0 / reflEventProb)*indirectReflection(object, shader, P, N, D, traceDepth + 1, debugPath, medium);
 	}
 
 	//Specular:
 	if(((shader.specular)||(shader.dielectric)||(shader.dielectricsss))&&(rayType != DIFFUSE_RAY))
 	{
 		//Multiply the indirect result by reciprocal of its probability to account for the fact that we only so a surface reflection event some of the time:
-		if((ignoreReflEvent == false)&&((traceDepth + 1) <= TRACE_DEPTH)) Lo_specular += (1.0/reflEventProb)*shader.ks * radiance(P, -1.0 * reflectVector(D, N), traceDepth + 1, includeEmission, debugPath, SPECULAR_RAY, medium);
+		if((ignoreReflEvent == false)&&((traceDepth + 1) <= maxTraceDepth)) Lo_specular += (1.0 / reflEventProb)*shader.ks * radiance(P, -1.0 * reflectVector(D, N), traceDepth + 1, includeEmission, debugPath, SPECULAR_RAY, medium);
 	}
 
 	if(shader.diffuse) return Lo_diffuse;
@@ -361,7 +351,7 @@ wa_colour udp_renderer::directReflection(wa_object *object, wa_shader shader, fl
 	float3 Wi;						// The incoming light direction (a unit direction vector from P into space)
 	wa_colour Lo(0.0);				// The result
 	float scalarComponent;			// Scalar component of surface reflection computation (to avoid too many color operations)
-	float NdotWi;						// Dot product of normal and vector from surface to light sample
+	float NdotWi;					// Dot product of normal and vector from surface to light sample
 
 	//Diffuse reflection. Compute the contribution from each light source:
 	for(int l = 0; l < numLights; l++)
@@ -369,7 +359,7 @@ wa_colour udp_renderer::directReflection(wa_object *object, wa_shader shader, fl
 		for(int i = 0; i < numLightSamples; i++)
 		{
 			//Generate a sample on the light source:
-			lights[l]->radianceSample(P, N, &Li, &LP, &reciprocal_Lpdf, TRACE_BIAS);
+			if(lights[l]->radianceSample(P, N, &Li, &LP, &reciprocal_Lpdf, TRACE_BIAS) == false) continue;
 
 			Wi = normalized(LP - P);
 			NdotWi = dot(Wi, N);
@@ -401,11 +391,12 @@ wa_colour udp_renderer::indirectReflection(wa_object *object, wa_shader shader, 
 	for (int i = 0; i < numHemisphereSamples; i++)
 	{
 		Wi = hemisphereSampleUniform(N, &reciprocal_Hpdf);
+		if (dot(Wi, N) < 0.0) continue;
 
-		//Compute the incoming radiance from this direction by tracing a ray 
+		// Compute the incoming radiance from this direction by tracing a ray 
 		Li = radiance(P, -1.0*Wi, traceDepth, false, debugPath, DIFFUSE_RAY, medium);
 
-		//Compute the outgoing radiance due to this incoming radiance:
+		// Compute the outgoing radiance due to this incoming radiance:
 		scalarComponent = reciprocal_numHemisphereSamples * shader.BRDF(Wi, D) * dot(N, Wi) * reciprocal_Hpdf;
 		Lo += shader.kd * Li * scalarComponent;
 	}
@@ -425,7 +416,6 @@ wa_colour udp_renderer::volumeAttenuation(wa_shader medium, float3 A, float3 B, 
 	float RMD;								// The distance of each scatter event from A
 	float reciprocal_RMLpdf;				// The reciprocal of the pdf for generating scatter points along the internal beam
 
-
 	//No attenuation if the medium is clear:
 	if (medium.isClear) return 1.0;
 
@@ -438,102 +428,170 @@ wa_colour udp_renderer::volumeAttenuation(wa_shader medium, float3 A, float3 B, 
 
 wa_colour udp_renderer::volumeScattering(int objID, wa_shader medium, float3 A, float3 B, int traceDepth, wa_path *debugPath, bool doVolEvent, float volEventProb)
 {
-	float reciprocal_Lpdf;					// The reciprocal of the pdf of light sampling **measured relative to soild angle at the point receiving light**
-	float3 IB = B - A;						// The vector of the internal beam (from A -> B)
-	float IB_l = mag(IB);					// The distance from A to B
-	float3 S;								// The position vector of a scatter event along the internal beam 
-	int RMS;								// The number of ray march steps that will be taken along the internal beam
-	float reciprocal_RMS;					// The reciprocal of the number of ray march steps
-	float RMD;								// The distance of each scatter event from A
-	float reciprocal_RMLpdf;				// The reciprocal of the pdf for generating scatter points along the internal beam
+	float reciprocal_Lpdf;									// The reciprocal of the pdf of light sampling **measured relative to soild angle at the point receiving light**
+	float3 IB = B - A;										// The vector of the internal beam (from A -> B)
+	float3 IBn = normalized(IB);							// Normalized version of above
+	float IB_l = mag(IB);									// The distance from A to B
+	float3 S;												// The position vector of a scatter event along the internal beam 
+	int RMS;												// The number of ray march steps that will be taken along the internal beam
+	float reciprocal_RMS;									// The reciprocal of the number of ray march steps
+	float RMD;												// The distance of each scatter event from A
+	float reciprocal_RMLpdf;								// The reciprocal of the pdf for generating scatter points along the internal beam
+	wa_colour S_Lo;											// The outgoing radiance at a scatter point on the internal beam
+	wa_colour S_Lo_0;										// The contribution to S_Lo from an individual light sample or ray trace sample
+	wa_colour Li;											// Incoming radiance at a scatter point
+	float3 LP, LN;											// Position & normal vectors of sample points on light sources
+	wa_colour Li_visibility;								// The visibility between a scatter point and a light source sample
+	float3 Wi;												// a unit direction vector in the sphere sound a sattering point
+	wa_colour Lo(0.0);										// The outgoing radiance at A
+	wa_samplerBeam *beamSampler;							// Objects for generating samples along the beam
+	wa_samplerBeamUniform *beamSamplerU;
+	wa_samplerBeamExponentialAttenuation *beamSamplerE;
+	float Lpdf;												// Probability density of generating a directional sample using a light source's generator
+	float MIS;												// Multiple importance sampling value
 
-	wa_colour S_Lo;							// The outgoing radiance at a scatter point on the internal beam
-	wa_colour S_Lo_0;						// The contribution to S_Lo from an individual light sample or ray trace sample
-	wa_colour Li;							// Incoming radiance at a scatter point
-	float3 LP, LN;							// Position & normal vectors of sample points on light sources
-	wa_colour Li_visibility;				// The visibility between a scatter point and a light source sample
-	float3 Wi;								// a unit direction vector in the sphere sound a sattering point
-	wa_colour Lo(0.0);						// The outgoing radiance at A
-	wa_samplerBeam *beamSampler;			// Object for generating samples along the beam
-	
-	//for now, ignore the global medium:
-	if(objID == -1) return 0.0;
+	// No contribution if this medium does not scatter light:
+	if((medium.isClear)||((medium.ss.r == 0.0) && (medium.ss.g == 0.0) && (medium.ss.b == 0.0))) return 0.0;
 
-	//No scattering unless this is a participating medium:
-	if (medium.isClear) return 0.0;
-
-	//Split the distance into substeps roughly of length 'RAYMARCH_DIST'
-	RMS = (int)(3.0 / ((float)(traceDepth)+1)) + 1;
+	// The number of ray march steps to take is proportional to the length of the beam (but is reduced with increasing trace depth):
+	RMS = (int)(IB_l * rayMarchDistanceSampleRate / ((float)(traceDepth)+1)) + 1;
 	reciprocal_RMS = 1.0 / (float)(RMS);
 
-	// Create the sampling object:
-	//beamSampler = (wa_samplerBeam *)(new wa_samplerBeamUniform(A, B));
-	
-	// Choose an RGB channel at random to base the exponential sampling on:
-	/*float randomSample = randFloat();
-	float heroAttenuationCoefficient = medium.st.r;
-	if(randomSample < 0.666)
+	// Uniform or exponential distribution to ray march distance samples:
+	if(rayMarchDistanceDistributionExponent == 0.0)
 	{
-		if (randomSample >= 0.333) heroAttenuationCoefficient = medium.st.g;
-		else heroAttenuationCoefficient = medium.st.b;
-	}*/
-	float heroAttenuationCoefficient = 0.098;// (medium.st.r + medium.st.g + medium.st.b) / 3.0;
-	beamSampler = (wa_samplerBeam *)(new wa_samplerBeamExponentialAttenuation(A, B, heroAttenuationCoefficient));
+		beamSamplerU = new wa_samplerBeamUniform(A, B);
+		beamSampler = (wa_samplerBeam *)(beamSamplerU);
+	}
+	else
+	{
+		beamSamplerE = new wa_samplerBeamExponentialAttenuation(A, B, rayMarchDistanceDistributionExponent);
+		beamSampler = (wa_samplerBeam *)(beamSamplerE);
+	}
 
-	//Ray march along the internal beam:
+	// Ray march along the internal beam:
 	for (int s = 0; s < RMS; s++)
 	{
+		// Generate a random sample along the beam:
 		RMD = beamSampler->generateSample(&reciprocal_RMLpdf);
-
-		S = A + RMD * normalized(IB);
+		S = A + RMD * IBn;
+	
+		// Start with zero at this beam point, accumulate contributions:
 		S_Lo = 0.0;
 
-		// 'Direct' single scatter lighting is computed by finding paths of length 2 from this scatter point to the light source, via one transmission event at the surface:
-		for (int l = 0; l < lights.size(); l++)
+		// Compute direct lighting from light sources. 
+
+		// If this medium is the global medium, then assume that the light sources are in the same medium
+		// Compute direct lighting via both a light-based estimator and a solid angle estimator local to the current point in the volume
+		// Combine with multiple importance sampling:
+		if (objID == -1)
 		{
-			wa_colour test(0.0);
-
-			for (int i = 0; i < 16; i++)
+			for (int l = 0; l < lights.size(); l++)
 			{
-				// Get the light's central position:
-				float3 LP = lights[l]->getCentre();
+				for (int i = 0; i < numLightSamples; i++)
+				{
+					//Get a radiance sample from the light:
+					if (lights[l]->radianceSample(S, 0.0, &Li, &LP, &reciprocal_Lpdf, TRACE_BIAS))
+					{
+						Lpdf = 1.0 / reciprocal_Lpdf;
 
-				// Choose a direction (roughly in the direction of the light) along which we'll try to find a path to the light, via the refractive surface:
-				float rpdf;
-				Wi = -1.0 * sphereSampleBiased3(normalized(LP - S), 1.5, &rpdf);
+						// Compute the visibility between this scatter point and the light:
+						Li_visibility = visibility(S, LP, debugPath, false);
 
-				// Trace a path in this direction:
-				Li = directLightingSingleScatter(S, Wi, medium.objID, l, medium);
+						S_Lo_0 = Li_visibility * reciprocal_Lpdf * Li;
 
-				// If no contribution found, then skip:
-				if (Li == 0.0) continue;
+						// MIS:
+						MIS = Lpdf / (Lpdf + ONE_OVER_4_PI);
 
-				// Compute the contribution of scattering of this incoming light into the outgoing direction:
-				S_Lo_0 = Li * (1.0 / 16.0) * rpdf;
+						// Catch division by zero:
+						if (reciprocal_Lpdf == 0.0) MIS = 1.0;
 
-				S_Lo_0 *= medium.ss * medium.phase(acos(-1.0 * dot(Wi, normalized(IB))));
+						S_Lo_0 *= MIS;
 
-				S_Lo += S_Lo_0;
+						S_Lo_0 *= medium.ss * medium.phase(acos(-1.0 * dot(normalized(LP - S), normalized(IB))));
+						S_Lo_0 *= reciprocal_numLightSamples;
+
+						S_Lo += S_Lo_0;
+					}
+				}
 			}
 
-			if (debugPath)
+			for (int l = 0; l < lights.size(); l++)
 			{
-				for (int i = 0; i < traceDepth; i++) std::cout << "    ";
-				std::cout << "Direct light contribution: " << test << std::endl;
+				wa_colour test(0.0);
+
+				for (int i = 0; i < 1; i++)
+				{
+					// Compute direct lighting by sampling the solid angle sphere around this point for radiance emitted by the light sources: 
+					float rpdf;
+					Wi = -1.0 * sphereSampleUniform();
+					rpdf = 4.0 * M_PI;
+					float3 LP;
+
+					// Trace a ray in this direction:
+					Li = directLightHit(S, Wi, l, medium, &LP);
+
+					// If no contribution found, then skip:
+					if (Li == 0.0) continue;
+
+					// Compute the contribution of scattering of this incoming light into the outgoing direction:
+					S_Lo_0 = Li * rpdf;
+
+					// MIS:
+					float altPdf = lights[l]->pdf(LP, S);
+
+					float MIS = (ONE_OVER_4_PI) / (ONE_OVER_4_PI + altPdf);
+
+					if(std::isnan(MIS)) MIS = 1.0;
+					S_Lo_0 *= MIS;
+
+					S_Lo_0 *= medium.ss * medium.phase(acos(-1.0 * dot(Wi, normalized(IB))));
+
+					S_Lo += S_Lo_0;
+				}
 			}
 		}
 
-		//Indirect lighting from all paths in the sphere surrounding this scatter point:
-		if((doVolEvent) && ((traceDepth + 1) <= TRACE_DEPTH))
+		// If we are inside a scattering object, then assume that the light source is outside the object.
+		// Therefore any 'direct' lighting has to pass through the object's dielectric surface:
+		else
 		{
-			if (debugPath) debugPath->addVert(S);
+			// 'Direct' single scatter lighting is computed by finding paths of length 2 from this scatter point to the light source, via one transmission event at the surface:
+			for (int l = 0; l < lights.size(); l++)
+			{
+				for (int i = 0; i < 16; i++)
+				{
+					// Get the light's central position:
+					float3 LP = lights[l]->getCentre();
 
+					// Choose a direction (roughly in the direction of the light) along which we'll try to find a path to the light, via the refractive surface:
+					float rpdf;
+					Wi = -1.0 * sphereSampleBiased3(normalized(LP - S), 1.5, &rpdf);
+
+					// Trace a path in this direction:
+					Li = directLightingSingleScatter(S, Wi, medium.objID, l, medium);
+
+					// If no contribution found, then skip:
+					if (Li == 0.0) continue;
+
+					// Compute the contribution of scattering of this incoming light into the outgoing direction:
+					S_Lo_0 = Li * (1.0 / 16.0) * rpdf;
+					S_Lo_0 *= medium.ss * medium.phase(acos(-1.0 * dot(Wi, normalized(IB))));
+
+					S_Lo += S_Lo_0;
+				}
+			}
+		}
+
+		// Compute indirect lighting from the sphere of solid angles surrounding this scatter point:
+		if((doVolEvent) && ((traceDepth + 1) <= maxTraceDepth))
+		{
 			wa_primitive intr_next;
 
-			int numSphereSamplesTmp = 1;
-			float recip = 1.0 / (float)(numSphereSamplesTmp);
+			int numSphereSamples = 1;
+			float recip = 1.0 / (float)(numSphereSamples);
 
-			for (int i = 0; i < numSphereSamplesTmp; i++)
+			for (int i = 0; i < numSphereSamples; i++)
 			{
 				//Sample the sphere:
 				Wi = -1.0 * sphereSampleUniform();
@@ -541,11 +599,12 @@ wa_colour udp_renderer::volumeScattering(int objID, wa_shader medium, float3 A, 
 				//trace a ray in this direction:
 				Li = radiance(S, Wi, traceDepth + 1, false, debugPath, CAMERA_RAY, medium);
 
-				S_Lo_0 = Li * 4.0 * M_PI * recip;// reciprocal_numSphereSamples;
+				S_Lo_0 = Li * 4.0 * M_PI * recip;
 				S_Lo_0 *= medium.ss * medium.phase(acos(-1.0 * dot(Wi, normalized(IB))));
 
 				// Multiply by the reciprocal of the probability of performing a volume scattering event:
 				S_Lo += (1.0/volEventProb)*S_Lo_0;
+
 			}
 		}
 
@@ -555,7 +614,8 @@ wa_colour udp_renderer::volumeScattering(int objID, wa_shader medium, float3 A, 
 		Lo += S_Lo;
 	}
 
-	delete beamSampler;
+	if(rayMarchDistanceDistributionExponent == 0.0) delete beamSamplerU;
+	else delete beamSamplerE;
 
 	return Lo;
 }
@@ -602,6 +662,28 @@ wa_colour udp_renderer::directLightingSingleScatter(float3 P0, float3 D0, int ob
 
 	// If we get this far, then a correct path has been found. Return the contribution value:
 	return intr1.Le(D1)*volumeAttenuation(medium1, intr0.P, intr1.P, NULL) * (1.0 - fresnel) * volumeAttenuation(medium0, P0, intr0.P, NULL);
+}
+
+//
+//	directLighthHit()	Returns the radiance coming from direction Wi, but only considers an intersection with light 'lightID':
+//
+wa_colour udp_renderer::directLightHit(float3 P0, float3 D0, int lightID, wa_shader medium, float3 *LP)
+{
+	wa_ray r0;							// wa_ray objects for ray tracing
+	wa_primitive intr0;				// The intersection objects for the first & second surface hits	
+	bool hit;								// Whether or not we hit a surface as a result of trace()
+
+											//Trace a ray in the opposite direction of D to find the first visible surface:
+	r0.P = P0;
+	r0.D = -1.0*D0;
+	hit = theContent->traceFAST(&r0, &intr0);
+
+	// If we hit anything other than lightID, then stop here, there is no contribution:
+	if ((!hit) || (intr0.objID != lightID)) return 0.0;
+
+	// If we get this far, then the light has been hit. Return the contribution value:
+	*LP = intr0.P;
+	return intr0.Le(D0)*volumeAttenuation(medium, P0, intr0.P, NULL);
 }
 
 
@@ -894,4 +976,104 @@ void udp_renderer::setRegion(int l, int r, int b, int t)
 udp_renderer::~udp_renderer()
 {
 	free(internalBuf);
+}
+
+graphDatum::graphDatum(float x0, float y0, float z0, float r0, float g0, float b0)
+{
+x = x0;
+y = y0;
+z = z0;
+r = r0;
+g = g0;
+b = b0;
+}
+
+
+wa_samplerBeamLightRadiance::wa_samplerBeamLightRadiance(const float3& A_in, const float3& B_in, std::vector<wa_light *> &lights) :
+	wa_samplerBeam(A_in, B_in),
+	D(normalized(B - A)),
+	n(lights.size())
+{
+	float sumWeights = 0;								// Used to accumulate a sum of the light weights as they are computed.
+														//Collect the c, h, theta1 and theta2 values for each light source:
+	for (int l = 0; l < n; l++)
+	{
+		c.push_back(dot(D, (lights[l]->getP() - A)));
+		h.push_back(mag(lights[l]->getP() - A - (c[l] * D)));
+		theta1.push_back(atan(c[l] / h[l]));
+		theta2.push_back(atan((mag(B - A) - c[l]) / h[l]));
+
+		//To form a pdf, each light's pattern of radiance along the beam will be weighted according to the total radiance it produces along the beam:
+		weight.push_back(lights[l]->getPower().average() * (theta1[l] + theta2[l]) / h[l]);
+		sumWeights += weight[l];
+	}
+
+	//Normalize the weights:
+	for (int l = 0; l < lights.size(); l++)
+	{
+		weight[l] /= sumWeights;
+	}
+
+	//Perform a blend between the set of weights just calculated, and a perfectly equal set of weights:
+	for (int l = 0; l < lights.size(); l++)
+	{
+		weight[l] = (WEIGHT_EQUALITY)*(1.0 / (float)(n)) + (1 - WEIGHT_EQUALITY)*(weight[l]);
+	}
+}
+
+
+float wa_samplerBeamLightRadiance::generateSample(float *reciprocal_pdf)
+{
+	float random;							// A random float between 0 and 1
+	int lChoice = 0;						// A light, chosen at random:
+	float totalWeights = 0;					// Cumulative sum of light weights, to help with choosing a light at random
+	float result;							// The output sample value
+	float pdf;								// The probability density of choosing this value
+
+											//For each sample, choose which light's radiance distibution to sample from:
+	random = randFloat();
+
+	for (int l = 0; l < n; l++)
+	{
+		totalWeights += weight[l];
+
+		if (random <= totalWeights)
+		{
+			lChoice = l;
+			break;
+		}
+	}
+
+	//Generate a sample from this light's radiance distribution:
+	result = importanceSampleRayMarchLength_lightProximity(c[lChoice], h[lChoice], theta1[lChoice], theta2[lChoice]);
+
+	pdf = 0.0;
+	for (int l = 0; l < n; l++)
+	{
+		pdf += weight[l] * importanceSampleRayMarchLength_lightProximity_pdf(c[lChoice], h[lChoice], theta1[lChoice], theta2[lChoice], result);
+	}
+
+	*reciprocal_pdf = 1.0 / pdf;
+	return result;
+
+	return 0.0;
+}
+
+float wa_samplerBeamLightRadiance::importanceSampleRayMarchLength_lightProximity(float c, float h, float theta1, float theta2)
+{
+	float random = randFloat();
+	float result;
+
+	result = c - h * tan(theta1 * (1.0 - random) - theta2 * random);
+
+	return result;
+}
+
+float wa_samplerBeamLightRadiance::importanceSampleRayMarchLength_lightProximity_pdf(float c, float h, float theta1, float theta2, float randVar)
+{
+	return h / ((pow(h, 2) + pow(c - randVar, 2)) * (theta1 + theta2));
+}
+
+wa_samplerBeamLightRadiance::~wa_samplerBeamLightRadiance()
+{
 }

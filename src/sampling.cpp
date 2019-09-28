@@ -98,3 +98,48 @@ float wa_samplerBeamExponentialAttenuation::generateSample(float *reciprocal_pdf
 
 	return result;
 }
+
+
+
+wa_samplerBeamExponentialDistribution::wa_samplerBeamExponentialDistribution(const float3& A_in, const float3& B_in, const float& a_in) :
+	wa_samplerBeam(A_in, B_in),
+	a(a_in),
+	recip_a(1.0 / a),
+	exp_aL_minus_1(exp(a*len) - 1.0)
+{
+}
+
+
+float wa_samplerBeamExponentialDistribution::generateSample(float *reciprocal_pdf)
+{
+	float random = randFloat();
+
+	float result = recip_a * log(random * exp_aL_minus_1 + 1.0);
+
+	*reciprocal_pdf = (exp_aL_minus_1) / (a * exp(a*result));     //          1.0 / ((st / (1.0 - exp(-1.0 * st * len))) * exp(-1.0 * st * result));
+
+	return result;
+}
+
+wa_samplerBeamPowerDistribution::wa_samplerBeamPowerDistribution(const float3& A_in, const float3& B_in, const float& a_in) :
+	wa_samplerBeam(A_in, B_in),
+	a(a_in),
+	aplus1((float)(a + 1)),
+	L_aplus1(pow(len, aplus1)),
+	powroot(1.0 / (float)(a + 1))
+{
+}
+
+float wa_samplerBeamPowerDistribution::generateSample(float *reciprocal_pdf)
+{
+	float random = randFloat();
+
+	float result = pow(random * L_aplus1, powroot); 
+
+	*reciprocal_pdf = L_aplus1 / (aplus1 *  pow(result, a));
+
+	return result;
+}
+
+
+
