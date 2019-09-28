@@ -1,0 +1,19 @@
+v 0
+from  275 275 -755
+at    275 275 0
+up 0 1 0
+angle 40
+hither 0.1
+resolution 600 600
+width 1
+
+td 3
+me 0.0
+mr 0.01
+
+la 200 550 200  150 0 0  0 0 150  4000000 4000000 4000000
+
+g diffuse  0.7 0.7 0.7  cornellBox.obj
+g diffuse  0.7 0.07 0.07  cornellBoxLeftWall.obj
+g diffuse  0.07 0.7 0.07  cornellBoxRightWall.obj
+g specular  1.0 1.0 1.0  surf_dragon_root.fast
